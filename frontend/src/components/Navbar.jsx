@@ -33,9 +33,14 @@ function Navbar({ user, setUser }) {
               价格
             </Link>
             {user && (
-              <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 transition-colors">
-                我的剧本
-              </Link>
+              <>
+                <Link to="/dashboard" className="text-gray-600 hover:text-gray-900 transition-colors">
+                  我的剧本
+                </Link>
+                <Link to="/profile" className="text-gray-600 hover:text-gray-900 transition-colors">
+                  个人中心
+                </Link>
+              </>
             )}
           </div>
 
