@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import CreateScript from './pages/CreateScript'
 import ScriptDetail from './pages/ScriptDetail'
 import Pricing from './pages/Pricing'
+import Payment from './pages/Payment'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Admin from './pages/Admin'
@@ -54,6 +55,9 @@ function App() {
           <Route path="/login" element={<Login setUser={setUser} />} />
           <Route path="/register" element={<Register setUser={setUser} />} />
           <Route path="/pricing" element={<Pricing />} />
+          <Route path="/payment" element={
+            user ? <Payment /> : <Navigate to="/login" />
+          } />
           <Route path="/dashboard" element={
             user ? <Dashboard user={user} /> : <Navigate to="/login" />
           } />

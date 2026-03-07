@@ -1,251 +1,504 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Sparkles, Loader2, AlertCircle, CheckCircle, Film, Palette, Zap, BookOpen } from 'lucide-react'
+import { 
+  Sparkles, 
+  Loader2, 
+  AlertCircle, 
+  CheckCircle, 
+  Film, 
+  Palette, 
+  BookOpen,
+  Clock,
+  MessageSquare,
+  Send,
+  Bot,
+  User,
+  ChevronRight,
+  Save,
+  Download
+} from 'lucide-react'
+import api from '../services/api'
 
 function CreateScript({ user }) {
-  const [formData, setFormData] = useState({
-    prompt: '',
-    type: '爽剧',
-    style: '现代',
-    episodes: 80,
-    includeAssets: true
-  })
-  const [loading, setLoading] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [error, setError] = useState('')
   const navigate = useNavigate()
-
+  const messagesEndRef = useRef(null)
+  
+  // 步骤状态
+  const [step, setStep] = useState('select-model') // select-model, chat, completed
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  
+  // AI模型选择
+  const [models, setModels] = useState([])
+  const [selectedModel, setSelectedModel] = useState(null)
+  
+  // 剧本信息
+  const [scriptType, setScriptType] = useState('爽剧')
+  const [scriptStyle, setScriptStyle] = useState('现代')
+  const [originalPrompt, setOriginalPrompt] = useState('')
+  
+  // 对话会话
+  const [sessionId, setSessionId] = useState(null)
+  const [messages, setMessages] = useState([])
+  const [inputMessage, setInputMessage] = useState('')
+  
+  // 生成进度
+  const [currentStep, setCurrentStep] = useState('idea')
+  const [generatedContent, setGeneratedContent] = useState(null)
+  
+  // 剧本标题
+  const [scriptTitle, setScriptTitle] = useState('')
+  
   const types = ['爽剧', '悬疑', '喜剧', '虐心', '穿越', '重生', '系统流']
   const styles = ['现代', '古装', '民国', '科幻', '玄幻', '都市']
+  
+  const steps = [
+    { id: 'idea', label: '创意构思', icon: Sparkles },
+    { id: 'outline', label: '大纲生成', icon: BookOpen },
+    { id: 'characters', label: '角色设定', icon: User },
+    { id: 'episodes', label: '剧本生成', icon: Film },
+    { id: 'assets', label: '视觉资产', icon: Palette },
+    { id: 'completed', label: '完成', icon: CheckCircle }
+  ]
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    
-    if (!formData.prompt.trim()) {
-      setError('请输入你的想法')
+  useEffect(() => {
+    fetchModels()
+  }, [])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  const fetchModels = async () => {
+    try {
+      const response = await api.get('/ai-models/available')
+      setModels(response.data)
+      if (response.data.length > 0) {
+        setSelectedModel(response.data[0])
+      }
+    } catch (error) {
+      console.error('获取模型失败:', error)
+      // 使用默认模型
+      setModels([
+        { _id: 'default', name: 'GPT-4', provider: 'openai', icon: '🟢', description: 'OpenAI GPT-4模型' }
+      ])
+      setSelectedModel({ _id: 'default', name: 'GPT-4', provider: 'openai', icon: '🟢' })
+    }
+  }
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  const handleStartGeneration = async () => {
+    if (!selectedModel) {
+      setError('请选择一个AI模型')
+      return
+    }
+    if (!originalPrompt.trim()) {
+      setError('请输入你的创意')
       return
     }
 
     setLoading(true)
     setError('')
-    setProgress(0)
-
-    // 模拟进度
-    const progressInterval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 90) return prev
-        return prev + Math.random() * 15
-      })
-    }, 1000)
 
     try {
-      // 模拟API调用
-      await new Promise(resolve => setTimeout(resolve, 8000))
-      clearInterval(progressInterval)
-      setProgress(100)
-      
-      // 成功后跳转到剧本详情
-      setTimeout(() => {
-        navigate('/script/1')
-      }, 500)
+      const response = await api.post('/generation/start', {
+        aiModelId: selectedModel._id,
+        prompt: originalPrompt,
+        scriptType,
+        scriptStyle
+      })
+
+      setSessionId(response.data.sessionId)
+      setMessages(response.data.messages)
+      setCurrentStep(response.data.currentStep)
+      setStep('chat')
     } catch (err) {
-      clearInterval(progressInterval)
-      setError('生成失败，请稍后重试')
+      setError(err.response?.data?.error || '启动生成失败')
+    } finally {
       setLoading(false)
     }
   }
 
-  return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
-      {/* Header */}
-      <div className="text-center mb-10">
-        <h1 className="text-3xl font-bold mb-3">创建新剧本</h1>
-        <p className="text-gray-600">输入你的想法，AI将为你生成80集完整短剧剧本</p>
-      </div>
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || !sessionId) return
 
-      {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center text-red-600">
-          <AlertCircle className="w-5 h-5 mr-2" />
-          {error}
+    const userMessage = inputMessage
+    setInputMessage('')
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }])
+    setLoading(true)
+
+    try {
+      const response = await api.post(`/generation/${sessionId}/chat`, {
+        message: userMessage
+      })
+
+      setMessages(prev => [...prev, { role: 'assistant', content: response.data.message }])
+      setCurrentStep(response.data.currentStep)
+      setGeneratedContent(response.data.generatedContent)
+
+      // 如果完成了，显示完成界面
+      if (response.data.currentStep === 'completed') {
+        setStep('completed')
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || '发送消息失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleComplete = async () => {
+    if (!scriptTitle.trim()) {
+      setError('请输入剧本标题')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const response = await api.post(`/generation/${sessionId}/complete`, {
+        title: scriptTitle
+      })
+
+      navigate(`/script/${response.data.scriptId}`)
+    } catch (err) {
+      setError(err.response?.data?.error || '保存剧本失败')
+      setLoading(false)
+    }
+  }
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSendMessage()
+    }
+  }
+
+  // 步骤一：选择模型和输入创意
+  if (step === 'select-model') {
+    return (
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
+        {/* Header */}
+        <div className="text-center mb-10">
+          <h1 className="text-3xl font-bold mb-3">创建新剧本</h1>
+          <p className="text-gray-600">选择AI模型，输入你的创意，开始生成80集完整短剧剧本</p>
         </div>
-      )}
 
-      {loading ? (
-        <div className="card p-12 text-center">
-          <div className="w-20 h-20 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Loader2 className="w-10 h-10 text-primary-600 animate-spin" />
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center text-red-600">
+            <AlertCircle className="w-5 h-5 mr-2" />
+            {error}
           </div>
-          <h3 className="text-xl font-semibold mb-2">正在生成剧本...</h3>
-          <p className="text-gray-600 mb-6">AI正在根据你的创意生成完整剧本和视觉资产</p>
+        )}
+
+        {/* AI模型选择 */}
+        <div className="card p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-4 flex items-center">
+            <Bot className="w-5 h-5 mr-2" />
+            选择AI模型
+          </h3>
           
-          <div className="max-w-md mx-auto">
-            <div className="flex justify-between text-sm text-gray-600 mb-2">
-              <span>进度</span>
-              <span>{Math.round(progress)}%</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-primary-600 h-2 rounded-full transition-all duration-500"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          </div>
-
-          <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mx-auto">
-            <div className={`p-4 rounded-lg ${progress > 20 ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-400'}`}>
-              <BookOpen className="w-6 h-6 mx-auto mb-2" />
-              <p className="text-sm">分析创意</p>
-            </div>
-            <div className={`p-4 rounded-lg ${progress > 40 ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-400'}`}>
-              <Film className="w-6 h-6 mx-auto mb-2" />
-              <p className="text-sm">生成大纲</p>
-            </div>
-            <div className={`p-4 rounded-lg ${progress > 60 ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-400'}`}>
-              <Zap className="w-6 h-6 mx-auto mb-2" />
-              <p className="text-sm">编写剧本</p>
-            </div>
-            <div className={`p-4 rounded-lg ${progress > 80 ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-400'}`}>
-              <Palette className="w-6 h-6 mx-auto mb-2" />
-              <p className="text-sm">生成资产</p>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <form onSubmit={handleSubmit} className="card p-8">
-          {/* Prompt Input */}
-          <div className="mb-8">
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              你的想法 <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              value={formData.prompt}
-              onChange={(e) => setFormData({ ...formData, prompt: e.target.value })}
-              className="textarea text-lg"
-              rows={4}
-              placeholder="例如：一个穷小子意外获得超能力，开始逆袭人生，最终成为商业帝国的主宰..."
-              required
-            />
-            <p className="mt-2 text-sm text-gray-500">
-              描述越详细，生成的剧本质量越高。建议包含：主角身份、核心冲突、故事背景
-            </p>
-          </div>
-
-          {/* Type Selection */}
-          <div className="mb-8">
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              剧本类型
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {types.map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setFormData({ ...formData, type })}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    formData.type === type
-                      ? 'bg-primary-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {type}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Style Selection */}
-          <div className="mb-8">
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              时代风格
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {styles.map((style) => (
-                <button
-                  key={style}
-                  type="button"
-                  onClick={() => setFormData({ ...formData, style })}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    formData.style === style
-                      ? 'bg-accent-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {style}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Options */}
-          <div className="mb-8">
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={formData.includeAssets}
-                onChange={(e) => setFormData({ ...formData, includeAssets: e.target.checked })}
-                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-5 h-5"
-              />
-              <span className="ml-3 text-gray-700">
-                生成Midjourney视觉资产提示词（角色、场景、道具）
-              </span>
-            </label>
-          </div>
-
-          {/* Submit Button */}
-          <div className="flex flex-col sm:flex-row gap-4">
-            <button
-              type="submit"
-              className="btn-primary flex-1 py-4 text-lg"
-            >
-              <Sparkles className="w-5 h-5 mr-2" />
-              开始生成剧本
-            </button>
-          </div>
-
-          {/* Info */}
-          <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-            <div className="flex items-start">
-              <CheckCircle className="w-5 h-5 text-blue-600 mr-3 mt-0.5" />
-              <div className="text-sm text-blue-800">
-                <p className="font-medium mb-1">生成说明</p>
-                <ul className="space-y-1 text-blue-700">
-                  <li>• 预计生成时间：2-5分钟</li>
-                  <li>• 生成内容包括：80集完整剧本 + 付费卡点设计 + MJ提示词</li>
-                  <li>• 免费版每天可生成1次，升级会员可获得更多次数</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </form>
-      )}
-
-      {/* Templates */}
-      {!loading && (
-        <div className="mt-10">
-          <h3 className="text-lg font-semibold mb-4">或者从模板开始</h3>
-          <div className="grid md:grid-cols-3 gap-4">
-            {[
-              { title: '霸道总裁', desc: '冷酷总裁爱上平凡女孩的经典套路', type: '爽剧' },
-              { title: '穿越重生', desc: '现代人穿越古代，用现代知识改变命运', type: '穿越' },
-              { title: '系统流', desc: '获得系统加持，一路升级打怪', type: '系统流' },
-            ].map((template, i) => (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {models.map((model) => (
               <button
-                key={i}
-                onClick={() => setFormData({ ...formData, prompt: template.desc, type: template.type })}
-                className="card p-4 text-left hover:shadow-md transition-shadow"
+                key={model._id}
+                onClick={() => setSelectedModel(model)}
+                className={`p-4 rounded-lg border-2 text-left transition-all ${
+                  selectedModel?._id === model._id
+                    ? 'border-primary-500 bg-primary-50'
+                    : 'border-gray-200 hover:border-primary-300'
+                }`}
               >
-                <h4 className="font-semibold mb-1">{template.title}</h4>
-                <p className="text-sm text-gray-600 mb-2">{template.desc}</p>
-                <span className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded-full">
-                  {template.type}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">{model.icon}</span>
+                  <div>
+                    <p className="font-semibold">{model.name}</p>
+                    <p className="text-sm text-gray-500">{model.provider}</p>
+                  </div>
+                </div>
+                {model.description && (
+                  <p className="text-sm text-gray-600 mt-2">{model.description}</p>
+                )}
               </button>
             ))}
           </div>
         </div>
-      )}
-    </div>
-  )
+
+        {/* 剧本类型和风格 */}
+        <div className="card p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-4">剧本设置</h3>
+          
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                剧本类型
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {types.map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setScriptType(type)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      scriptType === type
+                        ? 'bg-primary-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                时代风格
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {styles.map((style) => (
+                  <button
+                    key={style}
+                    onClick={() => setScriptStyle(style)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      scriptStyle === style
+                        ? 'bg-accent-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {style}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 创意输入 */}
+        <div className="card p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-4">你的创意</h3>
+          <textarea
+            value={originalPrompt}
+            onChange={(e) => setOriginalPrompt(e.target.value)}
+            className="textarea text-lg"
+            rows={4}
+            placeholder="例如：一个穷小子意外获得超能力，开始逆袭人生，最终成为商业帝国的主宰..."
+          />
+          <p className="mt-2 text-sm text-gray-500">
+            描述越详细，生成的剧本质量越高。建议包含：主角身份、核心冲突、故事背景
+          </p>
+        </div>
+
+        {/* 开始按钮 */}
+        <button
+          onClick={handleStartGeneration}
+          disabled={loading}
+          className="btn-primary w-full py-4 text-lg"
+        >
+          {loading ? (
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+          ) : (
+            <Sparkles className="w-5 h-5 mr-2" />
+          )}
+          {loading ? '启动中...' : '开始创作'}
+        </button>
+      </div>
+    )
+  }
+
+  // 步骤二：对话生成
+  if (step === 'chat') {
+    return (
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
+        {/* Header */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold">剧本生成中</h1>
+              <p className="text-gray-600">与AI对话，一步步完善你的剧本</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{selectedModel?.icon}</span>
+              <span className="text-sm text-gray-600">{selectedModel?.name}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 进度条 */}
+        <div className="card p-4 mb-6">
+          <div className="flex items-center justify-between">
+            {steps.map((s, index) => (
+              <div key={s.id} className="flex items-center">
+                <div className={`flex flex-col items-center ${
+                  steps.findIndex(step => step.id === currentStep) >= index
+                    ? 'text-primary-600'
+                    : 'text-gray-400'
+                }`}>
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-1 ${
+                    steps.findIndex(step => step.id === currentStep) >= index
+                      ? 'bg-primary-100'
+                      : 'bg-gray-100'
+                  }`}>
+                    <s.icon className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs">{s.label}</span>
+                </div>
+                {index < steps.length - 1 && (
+                  <ChevronRight className="w-4 h-4 mx-2 text-gray-300" />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center text-red-600">
+            <AlertCircle className="w-5 h-5 mr-2" />
+            {error}
+          </div>
+        )}
+
+        {/* 对话区域 */}
+        <div className="card p-6 mb-6">
+          <div className="space-y-4 max-h-[500px] overflow-y-auto mb-4">
+            {messages.map((message, index) => (
+              <div
+                key={index}
+                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div className={`flex items-start gap-3 max-w-[80%] ${
+                  message.role === 'user' ? 'flex-row-reverse' : ''
+                }`}>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    message.role === 'user'
+                      ? 'bg-primary-100 text-primary-600'
+                      : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {message.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                  </div>
+                  <div className={`p-3 rounded-lg ${
+                    message.role === 'user'
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-gray-100 text-gray-800'
+                  }`}>
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* 输入框 */}
+          <div className="flex gap-2">
+            <textarea
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyPress={handleKeyPress}
+              className="textarea flex-1"
+              rows={2}
+              placeholder="输入消息..."
+              disabled={loading}
+            />
+            <button
+              onClick={handleSendMessage}
+              disabled={loading || !inputMessage.trim()}
+              className="btn-primary px-4"
+            >
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* 生成的内容预览 */}
+        {generatedContent && (
+          <div className="card p-6">
+            <h3 className="text-lg font-semibold mb-4">生成进度</h3>
+            {generatedContent.title && (
+              <div className="mb-4">
+                <p className="text-sm text-gray-600">剧本标题</p>
+                <p className="font-semibold">{generatedContent.title}</p>
+              </div>
+            )}
+            {generatedContent.characters && generatedContent.characters.length > 0 && (
+              <div className="mb-4">
+                <p className="text-sm text-gray-600">角色数</p>
+                <p className="font-semibold">{generatedContent.characters.length} 个</p>
+              </div>
+            )}
+            {generatedContent.episodes && generatedContent.episodes.length > 0 && (
+              <div>
+                <p className="text-sm text-gray-600">剧集数</p>
+                <p className="font-semibold">{generatedContent.episodes.length} 集</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // 步骤三：完成
+  if (step === 'completed') {
+    return (
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
+        <div className="card p-8 text-center">
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <CheckCircle className="w-10 h-10 text-green-600" />
+          </div>
+          
+          <h2 className="text-2xl font-bold mb-2">剧本生成完成！</h2>
+          <p className="text-gray-600 mb-6">你的80集短剧剧本已经生成完毕</p>
+
+          {error && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-600">
+              {error}
+            </div>
+          )}
+
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              剧本标题
+            </label>
+            <input
+              type="text"
+              value={scriptTitle}
+              onChange={(e) => setScriptTitle(e.target.value)}
+              className="input text-lg"
+              placeholder="输入剧本标题..."
+            />
+          </div>
+
+          <div className="flex gap-4">
+            <button
+              onClick={handleComplete}
+              disabled={loading}
+              className="btn-primary flex-1 py-3"
+            >
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin mr-2" />
+              ) : (
+                <Save className="w-5 h-5 mr-2" />
+              )}
+              保存剧本
+            </button>
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="btn-secondary py-3"
+            >
+              <Download className="w-5 h-5 mr-2" />
+              稍后保存
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 }
 
 export default CreateScript
