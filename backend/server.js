@@ -16,8 +16,8 @@ app.use(cors({
 
 // 限流
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15分钟
-  max: 100 // 每个IP 100次请求
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 app.use('/api/', limiter);
 
@@ -32,6 +32,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/short-dra
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/scripts', require('./routes/scripts'));
 app.use('/api/admin/prompts', require('./routes/admin'));
+app.use('/api/ai-models', require('./routes/aiModels'));
+app.use('/api/generation', require('./routes/generation'));
 
 // 健康检查
 app.get('/api/health', (req, res) => {
