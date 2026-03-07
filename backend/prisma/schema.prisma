@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String?
+  avatar    String?
+  
+  // 会员信息
+  membershipType MembershipType @default(FREE)
+  membershipExpiresAt DateTime?
+  
+  // 积分系统
+  credits   Int      @default(0)
+  totalSpent Int     @default(0)
+  
+  // 时间戳
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // 关联
+  scripts   Script[]
+  payments  Payment[]
+  
+  @@map("users")
+}
+
+model Script {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String
+  prompt      String   // 用户的原始输入
+  
+  // 生成内容
+  outline     String?  @db.Text  // 完整大纲JSON
+  characters  String?  @db.Text  // 人物设定JSON
+  episodes    String?  @db.Text  // 分集剧本JSON
+  assets      String?  @db.Text  // MJ提示词JSON
+  
+  // 元数据
+  genre       String?  // 类型
+  episodesCount Int   @default(80)
+  status      ScriptStatus @default(GENERATING)
+  
+  // 成本记录
+  creditsUsed Int      @default(0)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("scripts")
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  userId      String
+  type        PaymentType
+  amount      Float    // 金额(元)
+  credits     Int      // 获得积分
+  status      PaymentStatus @default(PENDING)
+  
+  // 支付平台信息
+  platform    String?  // alipay/wechat
+  tradeNo     String?  // 第三方订单号
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("payments")
+}
+
+enum MembershipType {
+  FREE      // 免费用户
+  BASIC     // 基础会员
+  PRO       // 专业会员
+  ENTERPRISE // 企业会员
+}
+
+enum ScriptStatus {
+  GENERATING  // 生成中
+  COMPLETED   // 已完成
+  FAILED      // 失败
+}
+
+enum PaymentType {
+  CREDITS     // 积分充值
+  MEMBERSHIP  // 会员订阅
+}
+
+enum PaymentStatus {
+  PENDING     // 待支付
+  PAID        // 已支付
+  FAILED      // 失败
+  REFUNDED    // 已退款
+}
