@@ -7,6 +7,7 @@ import { config } from './config';
 import authRoutes from './routes/auth';
 import scriptRoutes from './routes/scripts';
 import paymentRoutes from './routes/payments';
+import exportRoutes from './routes/export';
 import { initWebSocketServer } from './services/websocketService';
 
 const app = express();
@@ -36,6 +37,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/scripts', scriptRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/export', exportRoutes);
 
 // 健康检查
 app.get('/health', (req, res) => {

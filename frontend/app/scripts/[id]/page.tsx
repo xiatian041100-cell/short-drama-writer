@@ -6,10 +6,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ArrowLeft, FileText, Users, Film, Palette, Download,
   ChevronRight, ChevronDown, Copy, Check, Clock,
-  Target, Sparkles, Zap, Crown, BookOpen, Image as ImageIcon
+  Target, Sparkles, Zap, Crown, BookOpen, Image as ImageIcon,
+  FileDown, FileJson, FileType, FileSpreadsheet, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger 
+} from '@/components/ui/dropdown-menu';
 import { useAuthStore, apiRequest } from '@/lib/auth';
 import { useToast } from '@/components/ui/use-toast';
 import Link from 'next/link';
@@ -70,6 +77,14 @@ interface Script {
   assets: Asset[];
 }
 
+const exportFormats = [
+  { id: 'markdown', name: 'Markdown', icon: FileText, desc: '适合文档编辑' },
+  { id: 'word', name: 'Word 文档', icon: FileType, desc: 'HTML 格式，可被 Word 打开' },
+  { id: 'text', name: '纯文本', icon: FileDown, desc: '简洁文本格式' },
+  { id: 'json', name: 'JSON', icon: FileJson, desc: '结构化数据' },
+  { id: 'csv', name: 'CSV (仅分集)', icon: FileSpreadsheet, desc: '表格数据' },
+];
+
 export default function ScriptDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -77,6 +92,7 @@ export default function ScriptDetailPage() {
   const { toast } = useToast();
   const [script, setScript] = useState<Script | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
   const [expandedEpisodes, setExpandedEpisodes] = useState<number[]>([1]);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
 
@@ -98,6 +114,61 @@ export default function ScriptDetailPage() {
       toast({ title: '获取剧本失败', description: error.message, variant: 'destructive' });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleExport = async (format: string) => {
+    if (!script) return;
+    
+    setIsExporting(true);
+    
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/export/${script.id}?format=${format}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || '导出失败');
+      }
+
+      // 获取文件名
+      const contentDisposition = response.headers.get('content-disposition');
+      let filename = `${script.title}.${format === 'markdown' ? 'md' : format === 'word' ? 'html' : format}`;
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="(.+)"/);
+        if (match) {
+          filename = decodeURIComponent(match[1]);
+        }
+      }
+
+      // 下载文件
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({ 
+        title: '导出成功', 
+        description: `已下载: ${filename}` 
+      });
+
+    } catch (error: any) {
+      toast({ 
+        title: '导出失败', 
+        description: error.message, 
+        variant: 'destructive' 
+      });
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -160,10 +231,43 @@ export default function ScriptDetailPage() {
               <p className="text-xs text-slate-500">{script.genre} · {script.episodes?.length || 0}集</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" className="border-slate-700">
-            <Download className="w-4 h-4 mr-2" />
-            导出
-          </Button>
+          
+          {/* Export Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="border-slate-700 hover:border-violet-500/50"
+                disabled={isExporting}
+              >
+                {isExporting ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4 mr-2" />
+                )}
+                导出
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56 bg-slate-900 border-slate-700">
+              {exportFormats.map((format) => {
+                const Icon = format.icon;
+                return (
+                  <DropdownMenuItem
+                    key={format.id}
+                    onClick={() => handleExport(format.id)}
+                    className="flex items-start gap-3 py-3 cursor-pointer hover:bg-slate-800 focus:bg-slate-800"
+                  >
+                    <Icon className="w-5 h-5 text-violet-400 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-white">{format.name}</p>
+                      <p className="text-xs text-slate-500">{format.desc}</p>
+                    </div>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
