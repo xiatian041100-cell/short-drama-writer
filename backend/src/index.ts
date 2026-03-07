@@ -2,54 +2,58 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { createServer } from 'http';
 import { config } from './config';
 import authRoutes from './routes/auth';
 import scriptRoutes from './routes/scripts';
 import paymentRoutes from './routes/payments';
+import { initWebSocketServer } from './services/websocketService';
 
 const app = express();
+const server = createServer(app);
 
-// 安全中间件
+// 初始化 WebSocket
+initWebSocketServer(server);
+
+// 中间件
 app.use(helmet());
-
-// CORS
 app.use(cors({
-  origin: config.frontendUrl,
+  origin: config.server.frontendUrl,
   credentials: true,
 }));
 
-// 限流
+// 速率限制
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15分钟
   max: 100, // 每个IP最多100个请求
-  message: { error: 'Too many requests, please try again later' },
+  message: { error: '请求过于频繁，请稍后再试' },
 });
 app.use(limiter);
 
-// 解析JSON
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json());
+
+// 路由
+app.use('/api/auth', authRoutes);
+app.use('/api/scripts', scriptRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // 健康检查
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// API路由
-app.use('/api/auth', authRoutes);
-app.use('/api/scripts', scriptRoutes);
-app.use('/api/payments', paymentRoutes);
-app.use('/api/pricing', paymentRoutes);
-
 // 错误处理
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Internal server error' });
+  console.error('Error:', err);
+  res.status(500).json({ 
+    error: '服务器内部错误',
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined 
+  });
 });
 
-// 启动服务器
-app.listen(config.port, () => {
-  console.log(`🚀 Server running on http://localhost:${config.port}`);
-  console.log(`📊 Environment: ${config.nodeEnv}`);
-});
+const PORT = config.server.port;
 
-export default app;
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 WebSocket server ready on ws://localhost:${PORT}/ws`);
+});

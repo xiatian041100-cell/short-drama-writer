@@ -1,19 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ArrowLeft, Sparkles, Wand2, Film, Loader2, CheckCircle,
   Lightbulb, Heart, Sword, Ghost, Crown, Rocket, Brain,
-  ChevronRight, Clock, Zap, Target, Users, Palette
+  ChevronRight, Clock, Zap, Target, Users, Palette, AlertCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Progress } from '@/components/ui/progress';
 import { useAuthStore, apiRequest } from '@/lib/auth';
 import { useToast } from '@/components/ui/use-toast';
+import { useWebSocket, WebSocketMessage } from '@/lib/websocket';
 import Link from 'next/link';
 
 const genres = [
@@ -35,10 +35,13 @@ const examplePrompts = [
   "顶级杀手退隐江湖开起小餐馆，却被仇家找上门，被迫重出江湖保护家人",
 ];
 
-interface GenerationStage {
+interface GenerationState {
+  scriptId: string | null;
   stage: string;
   progress: number;
   message: string;
+  status: 'idle' | 'generating' | 'completed' | 'error';
+  error?: string;
 }
 
 export default function CreatePage() {
@@ -47,15 +50,75 @@ export default function CreatePage() {
   const { toast } = useToast();
   const [prompt, setPrompt] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('爽剧');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generationStage, setGenerationStage] = useState<GenerationStage | null>(null);
-  const [scriptId, setScriptId] = useState<string | null>(null);
+  const [generationState, setGenerationState] = useState<GenerationState>({
+    scriptId: null,
+    stage: '',
+    progress: 0,
+    message: '',
+    status: 'idle',
+  });
+
+  // WebSocket 消息处理
+  const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
+    console.log('WebSocket message:', message);
+    
+    switch (message.type) {
+      case 'progress':
+        setGenerationState(prev => ({
+          ...prev,
+          stage: message.stage || prev.stage,
+          progress: message.progress || prev.progress,
+          message: message.message || prev.message,
+          status: 'generating',
+        }));
+        break;
+        
+      case 'complete':
+        setGenerationState(prev => ({
+          ...prev,
+          progress: 100,
+          message: message.message || '剧本生成完成！',
+          status: 'completed',
+        }));
+        toast({
+          title: '生成完成',
+          description: `《${message.data?.title || '新剧本'}》已生成完毕`,
+        });
+        // 延迟跳转
+        setTimeout(() => {
+          router.push('/dashboard');
+        }, 2000);
+        break;
+        
+      case 'error':
+        setGenerationState(prev => ({
+          ...prev,
+          message: message.message || '生成失败',
+          status: 'error',
+          error: message.message,
+        }));
+        toast({
+          title: '生成失败',
+          description: message.message,
+          variant: 'destructive',
+        });
+        break;
+    }
+  }, [toast, router]);
+
+  // 初始化 WebSocket
+  const { isConnected } = useWebSocket({
+    token,
+    onMessage: handleWebSocketMessage,
+    onConnect: () => console.log('WebSocket connected'),
+    onDisconnect: () => console.log('WebSocket disconnected'),
+  });
 
   useEffect(() => {
     if (!token) {
       router.push('/');
     }
-  }, [token]);
+  }, [token, router]);
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
@@ -63,7 +126,21 @@ export default function CreatePage() {
       return;
     }
 
-    setIsGenerating(true);
+    if (!isConnected) {
+      toast({ 
+        title: '连接中...', 
+        description: '正在建立实时连接，请稍候',
+      });
+      return;
+    }
+
+    setGenerationState({
+      scriptId: null,
+      stage: 'outline',
+      progress: 0,
+      message: '正在提交生成任务...',
+      status: 'generating',
+    });
     
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/scripts`, {
@@ -81,54 +158,33 @@ export default function CreatePage() {
       }
 
       const data = await response.json();
-      setScriptId(data.script.id);
+      
+      setGenerationState(prev => ({
+        ...prev,
+        scriptId: data.script.id,
+      }));
       
       toast({
         title: '生成任务已创建',
         description: 'AI正在创作你的剧本，请稍候...',
       });
 
-      // 模拟进度更新
-      simulateProgress();
     } catch (error: any) {
+      setGenerationState(prev => ({
+        ...prev,
+        status: 'error',
+        error: error.message,
+      }));
       toast({ title: '生成失败', description: error.message, variant: 'destructive' });
-      setIsGenerating(false);
     }
-  };
-
-  const simulateProgress = () => {
-    const stages = [
-      { stage: 'outline', progress: 10, message: '正在构思剧本核心...' },
-      { stage: 'outline', progress: 20, message: '构建世界观设定...' },
-      { stage: 'characters', progress: 30, message: '创建角色档案...' },
-      { stage: 'characters', progress: 40, message: '设计人物关系网...' },
-      { stage: 'episodes', progress: 50, message: '编写分集大纲...' },
-      { stage: 'episodes', progress: 60, message: '设计反转与钩子...' },
-      { stage: 'episodes', progress: 70, message: '优化付费卡点...' },
-      { stage: 'assets', progress: 80, message: '生成视觉资产...' },
-      { stage: 'assets', progress: 90, message: '完善细节...' },
-      { stage: 'complete', progress: 100, message: '剧本生成完成！' },
-    ];
-
-    let currentStage = 0;
-    const interval = setInterval(() => {
-      if (currentStage < stages.length) {
-        setGenerationStage(stages[currentStage]);
-        currentStage++;
-      } else {
-        clearInterval(interval);
-        setTimeout(() => {
-          router.push('/dashboard');
-        }, 1500);
-      }
-    }, 2000);
   };
 
   const useExample = (example: string) => {
     setPrompt(example);
   };
 
-  if (isGenerating) {
+  // 生成中状态页面
+  if (generationState.status === 'generating' || generationState.status === 'completed') {
     return (
       <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
         <div className="text-center max-w-md px-4">
@@ -154,7 +210,11 @@ export default function CreatePage() {
               />
             ))}
             <div className="absolute inset-0 flex items-center justify-center">
-              <Wand2 className="w-12 h-12 text-violet-400" />
+              {generationState.status === 'completed' ? (
+                <CheckCircle className="w-12 h-12 text-emerald-400" />
+              ) : (
+                <Wand2 className="w-12 h-12 text-violet-400" />
+              )}
             </div>
           </motion.div>
 
@@ -163,7 +223,7 @@ export default function CreatePage() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            AI正在创作中
+            {generationState.status === 'completed' ? '生成完成！' : 'AI正在创作中'}
           </motion.h2>
           
           <motion.p 
@@ -172,23 +232,75 @@ export default function CreatePage() {
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
           >
-            {generationStage?.message || '准备开始...'}
+            {generationState.message}
           </motion.p>
 
           <div className="w-full bg-slate-900 rounded-full h-2 mb-4 overflow-hidden">
             <motion.div 
               className="h-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500"
               initial={{ width: 0 }}
-              animate={{ width: `${generationStage?.progress || 0}%` }}
+              animate={{ width: `${generationState.progress}%` }}
               transition={{ duration: 0.5 }}
             />
           </div>
 
           <div className="flex justify-between text-xs text-slate-500">
-            <span>构思</span>
-            <span>角色</span>
-            <span>大纲</span>
-            <span>资产</span>
+            <span className={generationState.progress >= 0 ? 'text-violet-400' : ''}>构思</span>
+            <span className={generationState.progress >= 30 ? 'text-violet-400' : ''}>角色</span>
+            <span className={generationState.progress >= 50 ? 'text-violet-400' : ''}>大纲</span>
+            <span className={generationState.progress >= 80 ? 'text-violet-400' : ''}>资产</span>
+          </div>
+
+          {!isConnected && generationState.status === 'generating' && (
+            <motion.div 
+              className="mt-6 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm flex items-center justify-center gap-2"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <Loader2 className="w-4 h-4 animate-spin" />
+              连接断开，正在重连...
+            </motion.div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 错误状态
+  if (generationState.status === 'error') {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+        <div className="text-center max-w-md px-4">
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="w-24 h-24 mx-auto mb-6 rounded-full bg-red-500/10 flex items-center justify-center"
+          >
+            <AlertCircle className="w-12 h-12 text-red-400" />
+          </motion.div>
+
+          <h2 className="text-2xl font-bold text-white mb-2">生成失败</h2>
+          <p className="text-slate-400 mb-6">{generationState.error}</p>
+
+          <div className="flex gap-3 justify-center">
+            <Button
+              variant="outline"
+              onClick={() => setGenerationState({
+                scriptId: null,
+                stage: '',
+                progress: 0,
+                message: '',
+                status: 'idle',
+              })}
+              className="border-slate-700"
+            >
+              重试
+            </Button>
+            <Link href="/dashboard">
+              <Button className="bg-gradient-to-r from-violet-600 to-fuchsia-600">
+                返回 Dashboard
+              </Button>
+            </Link>
           </div>
         </div>
       </div>
@@ -214,6 +326,14 @@ export default function CreatePage() {
               </div>
               <span className="font-semibold text-white">新建剧本</span>
             </div>
+          </div>
+          
+          {/* Connection Status */}
+          <div className="flex items-center gap-2 text-xs">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+            <span className={isConnected ? 'text-emerald-400' : 'text-amber-400'}>
+              {isConnected ? '已连接' : '连接中...'}
+            </span>
           </div>
         </div>
       </header>
@@ -292,12 +412,21 @@ export default function CreatePage() {
                 </p>
                 <Button
                   onClick={handleGenerate}
-                  disabled={!prompt.trim()}
+                  disabled={!prompt.trim() || !isConnected}
                   className="bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-600 hover:from-violet-500 hover:via-fuchsia-500 hover:to-pink-500 text-white shadow-lg shadow-violet-500/25 disabled:opacity-50"
                 >
-                  <Wand2 className="w-4 h-4 mr-2" />
-                  开始生成
-                  <ChevronRight className="w-4 h-4 ml-1" />
+                  {!isConnected ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      连接中...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-4 h-4 mr-2" />
+                      开始生成
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </>
+                  )}
                 </Button>
               </div>
             </div>

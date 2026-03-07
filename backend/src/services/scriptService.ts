@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { generateFullScript, GenerationProgress } from './aiService';
 import { deductCredits } from './authService';
 import { config } from '../config';
+import { sendProgress } from './websocketService';
 
 const prisma = new PrismaClient();
 
@@ -15,8 +16,7 @@ export interface CreateScriptInput {
  * 创建剧本生成任务
  */
 export async function createScript(
-  input: CreateScriptInput,
-  onProgress?: (progress: GenerationProgress) => void
+  input: CreateScriptInput
 ) {
   const { userId, prompt, genre } = input;
 
@@ -73,8 +73,17 @@ export async function createScript(
     },
   });
 
+  // 发送开始生成消息
+  sendProgress(userId, {
+    type: 'progress',
+    scriptId: script.id,
+    stage: 'outline',
+    progress: 0,
+    message: '开始生成剧本...',
+  });
+
   // 异步生成剧本
-  generateScriptContent(script.id, prompt, genre, onProgress).catch(console.error);
+  generateScriptContent(script.id, userId, prompt, genre).catch(console.error);
 
   return script;
 }
@@ -84,15 +93,22 @@ export async function createScript(
  */
 async function generateScriptContent(
   scriptId: string,
+  userId: string,
   prompt: string,
-  genre?: string,
-  onProgress?: (progress: GenerationProgress) => void
+  genre?: string
 ) {
   try {
     const result = await generateFullScript(prompt, {
       genre,
-      onProgress: (progress) => {
-        onProgress?.(progress);
+      onProgress: (progress: GenerationProgress) => {
+        // 通过 WebSocket 发送进度
+        sendProgress(userId, {
+          type: 'progress',
+          scriptId,
+          stage: progress.stage,
+          progress: progress.progress,
+          message: progress.message,
+        });
       },
     });
 
@@ -108,7 +124,18 @@ async function generateScriptContent(
         status: 'COMPLETED',
       },
     });
-  } catch (error) {
+
+    // 发送完成消息
+    sendProgress(userId, {
+      type: 'complete',
+      scriptId,
+      stage: 'complete',
+      progress: 100,
+      message: '剧本生成完成！',
+      data: { title: result.title },
+    });
+
+  } catch (error: any) {
     console.error('Script generation failed:', error);
     
     // 更新为失败状态
@@ -117,6 +144,15 @@ async function generateScriptContent(
       data: {
         status: 'FAILED',
       },
+    });
+
+    // 发送错误消息
+    sendProgress(userId, {
+      type: 'error',
+      scriptId,
+      stage: 'error',
+      progress: 0,
+      message: error.message || '生成失败',
     });
   }
 }

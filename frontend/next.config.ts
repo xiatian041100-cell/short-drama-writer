@@ -12,6 +12,11 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // 允许 WebSocket 连接
+  webpack: (config) => {
+    config.externals = [...(config.externals || []), { ws: 'ws' }];
+    return config;
+  },
 };
 
 export default nextConfig;
