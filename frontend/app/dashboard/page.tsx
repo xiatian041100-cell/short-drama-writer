@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Film, Plus, Settings, LogOut, User, CreditCard, 
   Clock, CheckCircle, Loader2, Sparkles, TrendingUp,
-  FileText, ChevronRight, Trash2, Eye
+  FileText, ChevronRight, Trash2, Eye, Search,
+  Filter, X, Calendar, Tag
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useAuthStore, apiRequest } from '@/lib/auth';
 import { useToast } from '@/components/ui/use-toast';
 import Link from 'next/link';
@@ -32,6 +34,21 @@ interface UserInfo {
   membershipType: string;
 }
 
+const genres = ['全部', '爽剧', '甜宠', '悬疑', '古装', '玄幻', '都市', '复仇', '穿越'];
+const statuses = [
+  { id: 'all', name: '全部', color: 'bg-slate-500' },
+  { id: 'COMPLETED', name: '已完成', color: 'bg-emerald-500' },
+  { id: 'GENERATING', name: '生成中', color: 'bg-amber-500' },
+  { id: 'FAILED', name: '失败', color: 'bg-red-500' },
+];
+
+const sortOptions = [
+  { id: 'newest', name: '最新创建' },
+  { id: 'oldest', name: '最早创建' },
+  { id: 'title', name: '标题排序' },
+  { id: 'episodes', name: '集数排序' },
+];
+
 export default function DashboardPage() {
   const router = useRouter();
   const { user, token, logout } = useAuthStore();
@@ -40,6 +57,14 @@ export default function DashboardPage() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'scripts' | 'settings'>('scripts');
+  
+  // Search and Filter States
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedGenre, setSelectedGenre] = useState('全部');
+  const [selectedStatus, setSelectedStatus] = useState('all');
+  const [sortBy, setSortBy] = useState('newest');
+  const [showFilters, setShowFilters] = useState(false);
+  const [dateRange, setDateRange] = useState<'all' | 'today' | 'week' | 'month'>('all');
 
   useEffect(() => {
     if (!token) {
@@ -64,6 +89,80 @@ export default function DashboardPage() {
     }
   };
 
+  // Filter and Sort Scripts
+  const filteredScripts = useMemo(() => {
+    let result = [...scripts];
+
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(script => 
+        script.title.toLowerCase().includes(query) ||
+        script.prompt.toLowerCase().includes(query) ||
+        script.genre.toLowerCase().includes(query)
+      );
+    }
+
+    // Genre filter
+    if (selectedGenre !== '全部') {
+      result = result.filter(script => script.genre === selectedGenre);
+    }
+
+    // Status filter
+    if (selectedStatus !== 'all') {
+      result = result.filter(script => script.status === selectedStatus);
+    }
+
+    // Date range filter
+    if (dateRange !== 'all') {
+      const now = new Date();
+      const filterDate = new Date();
+      
+      switch (dateRange) {
+        case 'today':
+          filterDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          filterDate.setDate(now.getDate() - 7);
+          break;
+        case 'month':
+          filterDate.setMonth(now.getMonth() - 1);
+          break;
+      }
+      
+      result = result.filter(script => new Date(script.createdAt) >= filterDate);
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      switch (sortBy) {
+        case 'newest':
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        case 'oldest':
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        case 'title':
+          return a.title.localeCompare(b.title);
+        case 'episodes':
+          return b.episodesCount - a.episodesCount;
+        default:
+          return 0;
+      }
+    });
+
+    return result;
+  }, [scripts, searchQuery, selectedGenre, selectedStatus, sortBy, dateRange]);
+
+  // Stats based on filtered results
+  const stats = useMemo(() => {
+    const filtered = filteredScripts;
+    return {
+      total: filtered.length,
+      completed: filtered.filter(s => s.status === 'COMPLETED').length,
+      generating: filtered.filter(s => s.status === 'GENERATING').length,
+      totalEpisodes: filtered.reduce((acc, s) => acc + (s.episodesCount || 0), 0),
+    };
+  }, [filteredScripts]);
+
   const handleLogout = () => {
     logout();
     router.push('/');
@@ -83,6 +182,16 @@ export default function DashboardPage() {
       toast({ title: '删除失败', description: error.message, variant: 'destructive' });
     }
   };
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setSelectedGenre('全部');
+    setSelectedStatus('all');
+    setSortBy('newest');
+    setDateRange('all');
+  };
+
+  const hasActiveFilters = searchQuery || selectedGenre !== '全部' || selectedStatus !== 'all' || dateRange !== 'all';
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -224,6 +333,172 @@ export default function DashboardPage() {
                 </Link>
               </div>
 
+              {/* Search and Filter Bar */}
+              <div className="mb-6 space-y-4">
+                {/* Search Input */}
+                <div className="flex gap-3">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                    <Input
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="搜索剧本标题、创意描述..."
+                      className="pl-10 bg-slate-950/50 border-slate-700/50 text-white placeholder:text-slate-600"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2"
+                      >
+                        <X className="w-4 h-4 text-slate-500 hover:text-white" />
+                      </button>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowFilters(!showFilters)}
+                    className={`border-slate-700 ${showFilters ? 'bg-violet-500/20 border-violet-500/50 text-violet-300' : 'text-slate-400'}`}
+                  >
+                    <Filter className="w-4 h-4 mr-2" />
+                    筛选
+                    {hasActiveFilters && (
+                      <span className="ml-2 w-2 h-2 rounded-full bg-violet-500" />
+                    )}
+                  </Button>
+                </div>
+
+                {/* Filter Panel */}
+                <AnimatePresence>
+                  {showFilters && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="glass-card p-4 overflow-hidden"
+                    >
+                      <div className="grid grid-cols-4 gap-4">
+                        {/* Genre Filter */}
+                        <div>
+                          <label className="text-xs text-slate-500 mb-2 block">剧本类型</label>
+                          <div className="flex flex-wrap gap-2">
+                            {genres.map(genre => (
+                              <button
+                                key={genre}
+                                onClick={() => setSelectedGenre(genre)}
+                                className={`px-3 py-1.5 rounded-lg text-xs transition-all ${
+                                  selectedGenre === genre
+                                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                    : 'bg-slate-950/50 text-slate-400 border border-slate-800 hover:border-slate-700'
+                                }`}
+                              >
+                                {genre}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Status Filter */}
+                        <div>
+                          <label className="text-xs text-slate-500 mb-2 block">状态</label>
+                          <div className="flex flex-wrap gap-2">
+                            {statuses.map(status => (
+                              <button
+                                key={status.id}
+                                onClick={() => setSelectedStatus(status.id)}
+                                className={`px-3 py-1.5 rounded-lg text-xs transition-all flex items-center gap-1.5 ${
+                                  selectedStatus === status.id
+                                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                    : 'bg-slate-950/50 text-slate-400 border border-slate-800 hover:border-slate-700'
+                                }`}
+                              >
+                                <div className={`w-2 h-2 rounded-full ${status.color}`} />
+                                {status.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Date Range */}
+                        <div>
+                          <label className="text-xs text-slate-500 mb-2 block">创建时间</label>
+                          <div className="flex flex-wrap gap-2">
+                            {[
+                              { id: 'all', name: '全部' },
+                              { id: 'today', name: '今天' },
+                              { id: 'week', name: '最近7天' },
+                              { id: 'month', name: '最近30天' },
+                            ].map(range => (
+                              <button
+                                key={range.id}
+                                onClick={() => setDateRange(range.id as any)}
+                                className={`px-3 py-1.5 rounded-lg text-xs transition-all ${
+                                  dateRange === range.id
+                                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                    : 'bg-slate-950/50 text-slate-400 border border-slate-800 hover:border-slate-700'
+                                }`}
+                              >
+                                {range.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Sort */}
+                        <div>
+                          <label className="text-xs text-slate-500 mb-2 block">排序方式</label>
+                          <select
+                            value={sortBy}
+                            onChange={(e) => setSortBy(e.target.value)}
+                            className="w-full px-3 py-1.5 rounded-lg text-xs bg-slate-950/50 text-slate-300 border border-slate-800 focus:border-violet-500/50 focus:outline-none"
+                          >
+                            {sortOptions.map(option => (
+                              <option key={option.id} value={option.id}>{option.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Clear Filters */}
+                      {hasActiveFilters && (
+                        <div className="mt-4 pt-4 border-t border-slate-800 flex justify-end">
+                          <button
+                            onClick={clearFilters}
+                            className="text-xs text-slate-400 hover:text-white flex items-center gap-1"
+                          >
+                            <X className="w-3 h-3" />
+                            清除筛选
+                          </button>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Results Count */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-400">
+                    共 <span className="text-white font-medium">{filteredScripts.length}</span> 个剧本
+                    {hasActiveFilters && ' (已筛选)'}
+                  </span>
+                  {hasActiveFilters && (
+                    <div className="flex gap-2">
+                      {selectedGenre !== '全部' && (
+                        <span className="px-2 py-1 rounded-full text-xs bg-violet-500/10 text-violet-300 border border-violet-500/20 flex items-center gap-1">
+                          <Tag className="w-3 h-3" />
+                          {selectedGenre}
+                        </span>
+                      )}
+                      {selectedStatus !== 'all' && (
+                        <span className="px-2 py-1 rounded-full text-xs bg-violet-500/10 text-violet-300 border border-violet-500/20 flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {statuses.find(s => s.id === selectedStatus)?.name}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Stats */}
               <div className="grid grid-cols-4 gap-4 mb-8">
                 <motion.div 
@@ -237,7 +512,7 @@ export default function DashboardPage() {
                       <FileText className="w-5 h-5 text-violet-400" />
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-white">{scripts.length}</p>
+                      <p className="text-2xl font-bold text-white">{stats.total}</p>
                       <p className="text-xs text-slate-500">总剧本数</p>
                     </div>
                   </div>
@@ -254,9 +529,7 @@ export default function DashboardPage() {
                       <CheckCircle className="w-5 h-5 text-emerald-400" />
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-white">
-                        {scripts.filter(s => s.status === 'COMPLETED').length}
-                      </p>
+                      <p className="text-2xl font-bold text-white">{stats.completed}</p>
                       <p className="text-xs text-slate-500">已完成</p>
                     </div>
                   </div>
@@ -273,9 +546,7 @@ export default function DashboardPage() {
                       <Clock className="w-5 h-5 text-amber-400" />
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-white">
-                        {scripts.filter(s => s.status === 'GENERATING').length}
-                      </p>
+                      <p className="text-2xl font-bold text-white">{stats.generating}</p>
                       <p className="text-xs text-slate-500">生成中</p>
                     </div>
                   </div>
@@ -292,9 +563,7 @@ export default function DashboardPage() {
                       <Sparkles className="w-5 h-5 text-fuchsia-400" />
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-white">
-                        {scripts.reduce((acc, s) => acc + (s.episodesCount || 0), 0)}
-                      </p>
+                      <p className="text-2xl font-bold text-white">{stats.totalEpisodes}</p>
                       <p className="text-xs text-slate-500">总集数</p>
                     </div>
                   </div>
@@ -302,27 +571,37 @@ export default function DashboardPage() {
               </div>
 
               {/* Scripts List */}
-              {scripts.length === 0 ? (
+              {filteredScripts.length === 0 ? (
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   className="glass-card p-12 text-center"
                 >
                   <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-slate-900/50 flex items-center justify-center">
-                    <Film className="w-10 h-10 text-slate-600" />
+                    <Search className="w-10 h-10 text-slate-600" />
                   </div>
-                  <h3 className="text-xl font-semibold text-white mb-2">还没有剧本</h3>
-                  <p className="text-slate-400 mb-6">开始创作你的第一个AI短剧剧本吧</p>
-                  <Link href="/create">
-                    <Button className="bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white">
-                      <Plus className="w-4 h-4 mr-2" />
-                      创建剧本
+                  <h3 className="text-xl font-semibold text-white mb-2">
+                    {hasActiveFilters ? '没有找到匹配的剧本' : '还没有剧本'}
+                  </h3>
+                  <p className="text-slate-400 mb-6">
+                    {hasActiveFilters ? '尝试调整筛选条件' : '开始创作你的第一个AI短剧剧本吧'}
+                  </p>
+                  {hasActiveFilters ? (
+                    <Button onClick={clearFilters} variant="outline" className="border-slate-700">
+                      清除筛选
                     </Button>
-                  </Link>
+                  ) : (
+                    <Link href="/create">
+                      <Button className="bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white">
+                        <Plus className="w-4 h-4 mr-2" />
+                        创建剧本
+                      </Button>
+                    </Link>
+                  )}
                 </motion.div>
               ) : (
                 <div className="grid gap-4">
-                  {scripts.map((script, index) => (
+                  {filteredScripts.map((script, index) => (
                     <motion.div
                       key={script.id}
                       initial={{ opacity: 0, y: 20 }}
