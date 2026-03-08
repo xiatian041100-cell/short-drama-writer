@@ -53,6 +53,9 @@ model Script {
   // 成本记录
   creditsUsed Int      @default(0)
   
+  // 重试机制
+  retryCount  Int      @default(0)  // 重试次数
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   

@@ -188,3 +188,15 @@ export async function addCredits(userId: string, amount: number) {
 
   return user.credits;
 }
+
+/**
+ * 退还用户积分（生成失败时使用）
+ */
+export async function refundCredits(userId: string, amount: number) {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { credits: { increment: amount } },
+  });
+
+  return user.credits;
+}

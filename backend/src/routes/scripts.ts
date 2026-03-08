@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createScript, getUserScripts, getScriptDetail, deleteScript } from '../services/scriptService';
+import { createScript, getUserScripts, getScriptDetail, deleteScript, retryScript } from '../services/scriptService';
 import { verifyToken } from '../services/authService';
 
 const router = Router();
@@ -68,6 +68,22 @@ router.get('/:id', authenticate, async (req, res) => {
     res.json({ script });
   } catch (error: any) {
     res.status(404).json({ error: error.message });
+  }
+});
+
+/**
+ * 重试生成失败的剧本
+ * POST /api/scripts/:id/retry
+ */
+router.post('/:id/retry', authenticate, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { id } = req.params;
+
+    const result = await retryScript({ userId, scriptId: id });
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
   }
 });
 

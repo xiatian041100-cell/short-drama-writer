@@ -7,7 +7,7 @@ import {
   Film, Plus, Settings, LogOut, User, CreditCard, 
   Clock, CheckCircle, Loader2, Sparkles, TrendingUp,
   FileText, ChevronRight, Trash2, Eye, Search,
-  Filter, X, Calendar, Tag
+  Filter, X, Calendar, Tag, RefreshCw
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,6 +23,7 @@ interface Script {
   episodesCount: number;
   status: 'GENERATING' | 'COMPLETED' | 'FAILED';
   creditsUsed: number;
+  retryCount: number;
   createdAt: string;
 }
 
@@ -180,6 +181,28 @@ export default function DashboardPage() {
       toast({ title: '删除成功' });
     } catch (error: any) {
       toast({ title: '删除失败', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const handleRetryScript = async (scriptId: string) => {
+    try {
+      toast({ title: '开始重试...', description: '正在重新生成剧本' });
+      
+      await apiRequest(`/scripts/${scriptId}/retry`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      
+      // 更新本地状态
+      setScripts(scripts.map(s => 
+        s.id === scriptId 
+          ? { ...s, status: 'GENERATING' as const }
+          : s
+      ));
+      
+      toast({ title: '重试已开始', description: '请查看实时进度' });
+    } catch (error: any) {
+      toast({ title: '重试失败', description: error.message, variant: 'destructive' });
     }
   };
 
@@ -623,6 +646,11 @@ export default function DashboardPage() {
                               {getStatusIcon(script.status)}
                               {getStatusText(script.status)}
                             </span>
+                            {script.status === 'FAILED' && script.retryCount > 0 && (
+                              <span className="text-xs text-slate-500">
+                                已重试 {script.retryCount}/3 次
+                              </span>
+                            )}
                           </div>
                           <p className="text-slate-400 text-sm mb-3 line-clamp-2">{script.prompt}</p>
                           <div className="flex items-center gap-4 text-xs text-slate-500">
@@ -645,6 +673,17 @@ export default function DashboardPage() {
                                 <Eye className="w-4 h-4" />
                               </Button>
                             </Link>
+                          )}
+                          {script.status === 'FAILED' && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={() => handleRetryScript(script.id)}
+                              className="text-slate-400 hover:text-amber-400"
+                              title={`重试 (${script.retryCount || 0}/3)`}
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                            </Button>
                           )}
                           <Button 
                             variant="ghost" 
