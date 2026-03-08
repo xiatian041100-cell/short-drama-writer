@@ -7,9 +7,12 @@ import {
   ArrowLeft, FileText, Users, Film, Palette, Download,
   ChevronRight, ChevronDown, Copy, Check, Clock,
   Target, Sparkles, Zap, Crown, BookOpen, Image as ImageIcon,
-  FileDown, FileJson, FileType, FileSpreadsheet, Loader2
+  FileDown, FileJson, FileType, FileSpreadsheet, Loader2,
+  Edit2, Save, X, Wand2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   DropdownMenu, 
@@ -95,6 +98,13 @@ export default function ScriptDetailPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [expandedEpisodes, setExpandedEpisodes] = useState<number[]>([1]);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
+  
+  // Edit states
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState('');
+  const [editingEpisode, setEditingEpisode] = useState<number | null>(null);
+  const [editedEpisode, setEditedEpisode] = useState<Episode | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -110,11 +120,95 @@ export default function ScriptDetailPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setScript(data.script);
+      setEditedTitle(data.script.title);
     } catch (error: any) {
       toast({ title: '获取剧本失败', description: error.message, variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Update script title
+  const handleUpdateTitle = async () => {
+    if (!script || editedTitle.trim() === script.title) {
+      setIsEditingTitle(false);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await apiRequest(`/edit/${script.id}/title`, {
+        method: 'PUT',
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ title: editedTitle.trim() }),
+      });
+      
+      setScript({ ...script, title: editedTitle.trim() });
+      toast({ title: '标题已更新' });
+      setIsEditingTitle(false);
+    } catch (error: any) {
+      toast({ title: '更新失败', description: error.message, variant: 'destructive' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Start editing episode
+  const startEditingEpisode = (episode: Episode) => {
+    setEditingEpisode(episode.episodeNumber);
+    setEditedEpisode({ ...episode });
+  };
+
+  // Cancel editing episode
+  const cancelEditingEpisode = () => {
+    setEditingEpisode(null);
+    setEditedEpisode(null);
+  };
+
+  // Save episode changes
+  const saveEpisodeChanges = async () => {
+    if (!script || !editedEpisode) return;
+
+    setIsSaving(true);
+    try {
+      await apiRequest(`/edit/${script.id}/episodes/${editedEpisode.episodeNumber}`, {
+        method: 'PUT',
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: editedEpisode.title,
+          scenes: editedEpisode.scenes,
+        }),
+      });
+
+      // Update local state
+      const updatedEpisodes = script.episodes.map(ep =>
+        ep.episodeNumber === editedEpisode.episodeNumber ? editedEpisode : ep
+      );
+      setScript({ ...script, episodes: updatedEpisodes });
+      
+      toast({ title: '第' + editedEpisode.episodeNumber + '集已更新' });
+      setEditingEpisode(null);
+      setEditedEpisode(null);
+    } catch (error: any) {
+      toast({ title: '保存失败', description: error.message, variant: 'destructive' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Update scene field
+  const updateScene = (sceneIndex: number, field: string, value: string) => {
+    if (!editedEpisode) return;
+    
+    const updatedScenes = [...editedEpisode.scenes];
+    updatedScenes[sceneIndex] = { ...updatedScenes[sceneIndex], [field]: value };
+    setEditedEpisode({ ...editedEpisode, scenes: updatedScenes });
   };
 
   const handleExport = async (format: string) => {
@@ -135,7 +229,6 @@ export default function ScriptDetailPage() {
         throw new Error(error.error || '导出失败');
       }
 
-      // 获取文件名
       const contentDisposition = response.headers.get('content-disposition');
       let filename = `${script.title}.${format === 'markdown' ? 'md' : format === 'word' ? 'html' : format}`;
       if (contentDisposition) {
@@ -145,7 +238,6 @@ export default function ScriptDetailPage() {
         }
       }
 
-      // 下载文件
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -156,17 +248,9 @@ export default function ScriptDetailPage() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      toast({ 
-        title: '导出成功', 
-        description: `已下载: ${filename}` 
-      });
-
+      toast({ title: '导出成功', description: `已下载: ${filename}` });
     } catch (error: any) {
-      toast({ 
-        title: '导出失败', 
-        description: error.message, 
-        variant: 'destructive' 
-      });
+      toast({ title: '导出失败', description: error.message, variant: 'destructive' });
     } finally {
       setIsExporting(false);
     }
@@ -226,8 +310,48 @@ export default function ScriptDetailPage() {
               </Button>
             </Link>
             <div className="w-px h-6 bg-slate-800" />
-            <div>
-              <h1 className="font-semibold text-white">{script.title}</h1>
+            <div className="flex-1 min-w-0">
+              {isEditingTitle ? (
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={editedTitle}
+                    onChange={(e) => setEditedTitle(e.target.value)}
+                    className="h-8 w-64 bg-slate-950/50 border-slate-700 text-white"
+                    autoFocus
+                  />
+                  <Button 
+                    size="sm" 
+                    onClick={handleUpdateTitle}
+                    disabled={isSaving}
+                    className="h-8 px-2"
+                  >
+                    {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    onClick={() => {
+                      setIsEditingTitle(false);
+                      setEditedTitle(script.title);
+                    }}
+                    className="h-8 px-2"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <h1 className="font-semibold text-white truncate">{script.title}</h1>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setIsEditingTitle(true)}
+                    className="h-6 w-6 p-0 text-slate-400 hover:text-white"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                  </Button>
+                </div>
+              )}
               <p className="text-xs text-slate-500">{script.genre} · {script.episodes?.length || 0}集</p>
             </div>
           </div>
@@ -404,7 +528,7 @@ export default function ScriptDetailPage() {
             </div>
           </TabsContent>
 
-          {/* Episodes Tab */}
+          {/* Episodes Tab with Edit */}
           <TabsContent value="episodes">
             <div className="space-y-3">
               {script.episodes?.map((episode, index) => (
@@ -431,11 +555,26 @@ export default function ScriptDetailPage() {
                         </span>
                       )}
                     </div>
-                    {expandedEpisodes.includes(episode.episodeNumber) ? (
-                      <ChevronDown className="w-5 h-5 text-slate-500" />
-                    ) : (
-                      <ChevronRight className="w-5 h-5 text-slate-500" />
-                    )}
+                    <div className="flex items-center gap-2">
+                      {editingEpisode !== episode.episodeNumber && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startEditingEpisode(episode);
+                          }}
+                          className="text-slate-400 hover:text-violet-400"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {expandedEpisodes.includes(episode.episodeNumber) ? (
+                        <ChevronDown className="w-5 h-5 text-slate-500" />
+                      ) : (
+                        <ChevronRight className="w-5 h-5 text-slate-500" />
+                      )}
+                    </div>
                   </button>
                   
                   <AnimatePresence>
@@ -447,30 +586,113 @@ export default function ScriptDetailPage() {
                         className="border-t border-slate-800/50"
                       >
                         <div className="p-4 space-y-4">
-                          {episode.scenes?.map((scene, sceneIndex) => (
-                            <div key={sceneIndex} className="bg-slate-950/50 rounded-lg p-4">
-                              <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
-                                <span className="text-violet-400">{scene.sceneNumber}</span>
-                                <span>·</span>
-                                <span>{scene.time}</span>
-                                <span>·</span>
-                                <span>{scene.location}</span>
+                          {editingEpisode === episode.episodeNumber && editedEpisode ? (
+                            // Edit Mode
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <Input
+                                  value={editedEpisode.title}
+                                  onChange={(e) => setEditedEpisode({ ...editedEpisode, title: e.target.value })}
+                                  className="bg-slate-950/50 border-slate-700 text-white font-medium"
+                                  placeholder="集标题"
+                                />
                               </div>
-                              <p className="text-slate-300 text-sm leading-relaxed mb-3">{scene.content}</p>
-                              {scene.climax && (
-                                <div className="flex items-start gap-2">
-                                  <Zap className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                                  <p className="text-sm text-amber-400/80">{scene.climax}</p>
+                              
+                              {editedEpisode.scenes.map((scene, sceneIndex) => (
+                                <div key={sceneIndex} className="bg-slate-950/50 rounded-lg p-4 space-y-3">
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <Input
+                                      value={scene.sceneNumber}
+                                      onChange={(e) => updateScene(sceneIndex, 'sceneNumber', e.target.value)}
+                                      className="bg-slate-900 border-slate-700 text-white text-xs"
+                                      placeholder="场景编号"
+                                    />
+                                    <Input
+                                      value={scene.time}
+                                      onChange={(e) => updateScene(sceneIndex, 'time', e.target.value)}
+                                      className="bg-slate-900 border-slate-700 text-white text-xs"
+                                      placeholder="时间"
+                                    />
+                                    <Input
+                                      value={scene.location}
+                                      onChange={(e) => updateScene(sceneIndex, 'location', e.target.value)}
+                                      className="bg-slate-900 border-slate-700 text-white text-xs"
+                                      placeholder="地点"
+                                    />
+                                  </div>
+                                  <Textarea
+                                    value={scene.content}
+                                    onChange={(e) => updateScene(sceneIndex, 'content', e.target.value)}
+                                    className="bg-slate-900 border-slate-700 text-white text-sm min-h-[80px]"
+                                    placeholder="场景内容"
+                                  />
+                                  <Input
+                                    value={scene.climax || ''}
+                                    onChange={(e) => updateScene(sceneIndex, 'climax', e.target.value)}
+                                    className="bg-slate-900 border-slate-700 text-amber-400 text-sm"
+                                    placeholder="高潮（可选）"
+                                  />
+                                  <Input
+                                    value={scene.hook || ''}
+                                    onChange={(e) => updateScene(sceneIndex, 'hook', e.target.value)}
+                                    className="bg-slate-900 border-slate-700 text-fuchsia-400 text-sm"
+                                    placeholder="钩子（可选）"
+                                  />
                                 </div>
-                              )}
-                              {scene.hook && (
-                                <div className="flex items-start gap-2 mt-2">
-                                  <Target className="w-4 h-4 text-fuchsia-400 flex-shrink-0 mt-0.5" />
-                                  <p className="text-sm text-fuchsia-400/80">{scene.hook}</p>
-                                </div>
-                              )}
+                              ))}
+                              
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={cancelEditingEpisode}
+                                  className="border-slate-700"
+                                >
+                                  <X className="w-4 h-4 mr-1" />
+                                  取消
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={saveEpisodeChanges}
+                                  disabled={isSaving}
+                                  className="bg-violet-600 hover:bg-violet-500"
+                                >
+                                  {isSaving ? (
+                                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                  ) : (
+                                    <Save className="w-4 h-4 mr-1" />
+                                  )}
+                                  保存
+                                </Button>
+                              </div>
                             </div>
-                          ))}
+                          ) : (
+                            // View Mode
+                            episode.scenes?.map((scene, sceneIndex) => (
+                              <div key={sceneIndex} className="bg-slate-950/50 rounded-lg p-4">
+                                <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
+                                  <span className="text-violet-400">{scene.sceneNumber}</span>
+                                  <span>·</span>
+                                  <span>{scene.time}</span>
+                                  <span>·</span>
+                                  <span>{scene.location}</span>
+                                </div>
+                                <p className="text-slate-300 text-sm leading-relaxed mb-3">{scene.content}</p>
+                                {scene.climax && (
+                                  <div className="flex items-start gap-2">
+                                    <Zap className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                                    <p className="text-sm text-amber-400/80">{scene.climax}</p>
+                                  </div>
+                                )}
+                                {scene.hook && (
+                                  <div className="flex items-start gap-2 mt-2">
+                                    <Target className="w-4 h-4 text-fuchsia-400 flex-shrink-0 mt-0.5" />
+                                    <p className="text-sm text-fuchsia-400/80">{scene.hook}</p>
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          )}
                         </div>
                       </motion.div>
                     )}
