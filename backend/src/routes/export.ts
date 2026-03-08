@@ -8,6 +8,10 @@ import {
   exportToWord,
   exportEpisodesToCSV 
 } from '../utils/exportUtils';
+import {
+  exportToScriptDocument,
+  exportToShootingScript
+} from '../utils/scriptExport';
 
 const router = Router();
 
@@ -78,6 +82,18 @@ router.get('/:id/export', authenticateToken, async (req: Request, res: Response)
         content = exportEpisodesToCSV(scriptData.episodes);
         filename = `${script.title}_episodes.csv`;
         contentType = 'text/csv; charset=utf-8';
+        break;
+
+      case 'script':
+        content = exportToScriptDocument(scriptData as any);
+        filename = `${script.title}_剧本.doc.html`;
+        contentType = 'text/html; charset=utf-8';
+        break;
+
+      case 'shooting':
+        content = exportToShootingScript(scriptData as any);
+        filename = `${script.title}_拍摄剧本.doc.html`;
+        contentType = 'text/html; charset=utf-8';
         break;
 
       default:

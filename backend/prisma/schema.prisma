@@ -60,8 +60,31 @@ model Script {
   updatedAt   DateTime @updatedAt
   
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assetLibrary AssetLibrary?
   
   @@map("scripts")
+}
+
+// 资产库 - 用于确保剧本一致性
+model AssetLibrary {
+  id          String   @id @default(uuid())
+  scriptId    String   @unique
+  
+  // 核心资产
+  outline     String   @db.Text  // 大纲JSON
+  characters  String   @db.Text  // 角色库JSON
+  scenes      String   @db.Text  // 场景库JSON
+  props       String   @db.Text  // 道具库JSON
+  locations   String   @db.Text  // 地点库JSON
+  worldRules  String   @db.Text  // 世界观规则JSON
+  themes      String   @db.Text  // 主题库JSON
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  
+  @@map("asset_libraries")
 }
 
 model Payment {

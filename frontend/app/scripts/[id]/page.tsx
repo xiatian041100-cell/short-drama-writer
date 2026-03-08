@@ -81,6 +81,8 @@ interface Script {
 }
 
 const exportFormats = [
+  { id: 'script', name: '标准剧本文档', icon: FileText, desc: '完整剧本格式，含人物小传、大纲、正文' },
+  { id: 'shooting', name: '拍摄剧本', icon: Film, desc: '简化格式，适合拍摄使用' },
   { id: 'markdown', name: 'Markdown', icon: FileText, desc: '适合文档编辑' },
   { id: 'word', name: 'Word 文档', icon: FileType, desc: 'HTML 格式，可被 Word 打开' },
   { id: 'text', name: '纯文本', icon: FileDown, desc: '简洁文本格式' },
