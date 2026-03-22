@@ -13,6 +13,7 @@ import Profile from './pages/Profile'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Admin from './pages/Admin'
+import { useAuth } from './hooks/useAuth.jsx'
 
 function App() {
   const [user, setUser] = useState(null)
