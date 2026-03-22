@@ -1,244 +1,508 @@
+// services/aiService.js - 统一AI服务调用层
 const axios = require('axios');
-const Script = require('../models/Script');
-const PromptVersion = require('../models/PromptVersion');
+const AIModel = require('../models/AIModel');
+const AI_PROVIDERS = require('../config/aiProviders');
 const EncryptionService = require('./encryptionService');
+const { logger } = require('../utils/logger');
 
 class AIService {
-  // 获取当前激活的智能体指令
-  static async getActivePrompt() {
-    const activeVersion = await PromptVersion.findOne({ isActive: true });
-    if (!activeVersion) {
-      throw new Error('没有激活的提示词版本');
-    }
-    
-    return EncryptionService.decrypt({
-      encrypted: activeVersion.content,
-      iv: activeVersion.iv,
-      authTag: activeVersion.authTag
-    });
+  // 获取所有可用的AI提供商配置
+  static getAvailableProviders() {
+    return Object.entries(AI_PROVIDERS).map(([key, provider]) => ({
+      id: key,
+      name: provider.name,
+      icon: provider.icon,
+      website: provider.website,
+      docs: provider.docs,
+      models: provider.models,
+      features: provider.features,
+      setup: provider.setup
+    }));
   }
 
-  // 生成剧本
-  static async generateScript(scriptId, userPrompt, type, style) {
-    try {
-      const script = await Script.findById(scriptId);
-      if (!script) {
-        throw new Error('剧本不存在');
-      }
+  // 获取特定提供商的详细配置
+  static getProviderConfig(providerId) {
+    return AI_PROVIDERS[providerId];
+  }
 
-      // 获取智能体指令
-      const systemPrompt = await this.getActivePrompt();
+  // 生成文本（统一接口）
+  static async generate(modelId, messages, options = {}) {
+    const model = await AIModel.findById(modelId);
+    if (!model || !model.isActive) {
+      throw new Error('AI模型不可用');
+    }
 
-      // 构建用户消息
-      const userMessage = `
-用户创意：${userPrompt}
-剧本类型：${type}
-时代风格：${style}
-预计集数：80集
+    const provider = AI_PROVIDERS[model.provider];
+    if (!provider) {
+      throw new Error('不支持的AI提供商');
+    }
 
-请按照系统指令，生成完整的80集短剧剧本。
-      `.trim();
-
-      // 调用AI API
-      const aiResponse = await this.callAIAPI(systemPrompt, userMessage);
-
-      // 解析AI响应
-      const parsedContent = this.parseAIResponse(aiResponse);
-
-      // 更新剧本
-      script.title = parsedContent.title || userPrompt.slice(0, 30);
-      script.content = aiResponse;
-      script.episodes = parsedContent.episodes || [];
-      script.assets = parsedContent.assets || { characters: [], scenes: [] };
-      script.status = 'completed';
-      await script.save();
-
-      return script;
-    } catch (error) {
-      console.error('AI生成失败:', error);
+    // 根据提供商调用不同的方法
+    switch (model.provider) {
+      case 'openai':
+      case 'moonshot':
+      case 'zhipu':
+      case 'minimax':
+        return this.callOpenAICompatible(model, messages, options);
       
-      // 更新剧本状态为失败
-      await Script.findByIdAndUpdate(scriptId, {
-        status: 'failed',
-        errorMessage: error.message
-      });
+      case 'anthropic':
+        return this.callAnthropic(model, messages, options);
       
-      throw error;
-    }
-  }
-
-  // 调用AI API
-  static async callAIAPI(systemPrompt, userMessage) {
-    // 优先使用 OpenAI
-    if (process.env.OPENAI_API_KEY) {
-      return this.callOpenAI(systemPrompt, userMessage);
-    }
-    
-    // 备选使用 Claude
-    if (process.env.ANTHROPIC_API_KEY) {
-      return this.callClaude(systemPrompt, userMessage);
-    }
-
-    // 如果没有配置API密钥，返回模拟数据（开发测试用）
-    console.warn('未配置AI API密钥，使用模拟数据');
-    return this.getMockResponse();
-  }
-
-  // 调用 OpenAI
-  static async callOpenAI(systemPrompt, userMessage) {
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4-turbo-preview',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        temperature: 0.8,
-        max_tokens: 4000
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 120000 // 2分钟超时
-      }
-    );
-
-    return response.data.choices[0].message.content;
-  }
-
-  // 调用 Claude
-  static async callClaude(systemPrompt, userMessage) {
-    const response = await axios.post(
-      'https://api.anthropic.com/v1/messages',
-      {
-        model: 'claude-3-opus-20240229',
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [
-          { role: 'user', content: userMessage }
-        ]
-      },
-      {
-        headers: {
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01'
-        },
-        timeout: 120000
-      }
-    );
-
-    return response.data.content[0].text;
-  }
-
-  // 解析AI响应
-  static parseAIResponse(response) {
-    try {
-      // 尝试提取JSON格式的数据
-      const jsonMatch = response.match(/```json\n([\s\S]*?)\n```/) || 
-                       response.match(/\{[\s\S]*\}/);
+      case 'google':
+        return this.callGoogle(model, messages, options);
       
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[1] || jsonMatch[0]);
-      }
-
-      // 如果无法解析JSON，返回结构化文本
-      return {
-        title: this.extractTitle(response),
-        episodes: this.extractEpisodes(response),
-        assets: this.extractAssets(response)
-      };
-    } catch (error) {
-      console.error('解析AI响应失败:', error);
-      return {
-        title: '未命名剧本',
-        episodes: [],
-        assets: { characters: [], scenes: [] }
-      };
+      case 'baidu':
+        return this.callBaidu(model, messages, options);
+      
+      case 'alibaba':
+        return this.callAlibaba(model, messages, options);
+      
+      case 'xinghuo':
+        return this.callXinghuo(model, messages, options);
+      
+      case 'azure':
+        return this.callAzure(model, messages, options);
+      
+      case 'cohere':
+        return this.callCohere(model, messages, options);
+      
+      case 'mistral':
+        return this.callMistral(model, messages, options);
+      
+      case 'tencent':
+        return this.callTencent(model, messages, options);
+      
+      case 'llama':
+        return this.callOpenAICompatible(model, messages, options);
+      
+      default:
+        throw new Error('未知的AI提供商');
     }
   }
 
-  // 提取标题
-  static extractTitle(response) {
-    const titleMatch = response.match(/#\s*(.+)/);
-    return titleMatch ? titleMatch[1].trim() : '未命名剧本';
-  }
-
-  // 提取分集内容
-  static extractEpisodes(response) {
-    const episodes = [];
-    const episodeMatches = response.matchAll(/第(\d+)集[：:]\s*(.+?)\n([\s\S]*?)(?=第\d+集|$)/g);
+  // OpenAI兼容格式（OpenAI、Moonshot、智谱、MiniMax、Llama等）
+  static async callOpenAICompatible(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
     
-    for (const match of episodeMatches) {
-      episodes.push({
-        episodeNumber: parseInt(match[1]),
-        title: match[2].trim(),
-        content: match[3].trim(),
-        scenes: []
-      });
+    let baseUrl = model.apiConfig.baseUrl || provider.config.baseUrl;
+    let endpoint = model.apiConfig.endpoint || provider.config.endpoint;
+
+    // Azure特殊处理
+    if (model.provider === 'azure') {
+      endpoint = endpoint.replace('{deployment-name}', model.modelId);
     }
 
-    return episodes;
-  }
-
-  // 提取视觉资产
-  static extractAssets(response) {
-    const assets = {
-      characters: [],
-      scenes: []
+    const headers = {
+      'Content-Type': 'application/json'
     };
 
-    // 提取角色
-    const charMatches = response.matchAll(/【角色】\s*(.+?)\n([\s\S]*?)(?=【角色】|$)/g);
-    for (const match of charMatches) {
-      assets.characters.push({
-        name: match[1].trim(),
-        description: this.extractField(match[2], '描述'),
-        mjPrompt: this.extractField(match[2], 'MJ提示词')
-      });
+    // 认证
+    if (provider.config.authType === 'bearer') {
+      headers[provider.config.authHeader] = `${provider.config.authPrefix || 'Bearer '}${credentials.apiKey}`;
+    } else if (provider.config.authType === 'apiKey') {
+      headers[provider.config.authHeader] = `${provider.config.authPrefix || ''}${credentials.apiKey}`;
     }
 
-    // 提取场景
-    const sceneMatches = response.matchAll(/【场景】\s*(.+?)\n([\s\S]*?)(?=【场景】|$)/g);
-    for (const match of sceneMatches) {
-      assets.scenes.push({
-        name: match[1].trim(),
-        description: this.extractField(match[2], '描述'),
-        mjPrompt: this.extractField(match[2], 'MJ提示词')
-      });
+    // 版本头（Anthropic等）
+    if (provider.config.versionHeader) {
+      headers[provider.config.versionHeader] = provider.config.version;
     }
 
-    return assets;
+    const requestBody = {
+      model: model.modelId,
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.content
+      })),
+      temperature: options.temperature || model.config.temperature,
+      max_tokens: options.maxTokens || model.config.maxTokens,
+      stream: options.stream || false
+    };
+
+    // 添加top_p（如果支持）
+    if (model.config.topP !== undefined) {
+      requestBody.top_p = model.config.topP;
+    }
+
+    const response = await axios.post(
+      `${baseUrl}${endpoint}`,
+      requestBody,
+      {
+        headers,
+        timeout: model.config.timeout,
+        responseType: options.stream ? 'stream' : 'json'
+      }
+    );
+
+    if (options.stream) {
+      return response.data;
+    }
+
+    // 更新统计
+    await this.updateModelStats(model, response.data.usage);
+
+    return {
+      content: response.data.choices[0].message.content,
+      usage: response.data.usage,
+      model: model.modelId
+    };
   }
 
-  // 提取字段
-  static extractField(text, fieldName) {
-    const match = text.match(new RegExp(`${fieldName}[：:]\s*(.+?)(?=\n|$)`));
-    return match ? match[1].trim() : '';
+  // Anthropic Claude
+  static async callAnthropic(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
+
+    const systemMessage = messages.find(m => m.role === 'system')?.content || '';
+    const userMessages = messages.filter(m => m.role !== 'system');
+
+    const response = await axios.post(
+      `${provider.config.baseUrl}${provider.config.endpoint}`,
+      {
+        model: model.modelId,
+        max_tokens: options.maxTokens || model.config.maxTokens,
+        temperature: options.temperature || model.config.temperature,
+        system: systemMessage,
+        messages: userMessages.map(m => ({
+          role: m.role,
+          content: m.content
+        })),
+        stream: options.stream || false
+      },
+      {
+        headers: {
+          [provider.config.authHeader]: credentials.apiKey,
+          [provider.config.versionHeader]: provider.config.version,
+          'Content-Type': 'application/json'
+        },
+        timeout: model.config.timeout,
+        responseType: options.stream ? 'stream' : 'json'
+      }
+    );
+
+    if (options.stream) {
+      return response.data;
+    }
+
+    const usage = response.data.usage;
+    await this.updateModelStats(model, usage);
+
+    return {
+      content: response.data.content[0].text,
+      usage: {
+        prompt_tokens: usage.input_tokens,
+        completion_tokens: usage.output_tokens,
+        total_tokens: usage.input_tokens + usage.output_tokens
+      },
+      model: model.modelId
+    };
   }
 
-  // 模拟响应（开发测试用）
-  static getMockResponse() {
-    return `
-# 穷小子逆袭记
+  // Google Gemini
+  static async callGoogle(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
 
-## 第1集：命运的转折
+    const formattedMessages = messages.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
 
-林逸是一个普通的穷小子，每天为了生计奔波。某天意外获得神秘超能力...
+    const endpoint = provider.config.endpoint.replace('{model}', model.modelId);
 
-【角色】林逸
-描述：穷小子，20岁，善良坚韧
-MJ提示词：A young poor man in his 20s, wearing worn clothes, kind eyes, modern city slum background, cinematic lighting, 8k, hyperrealistic --ar 9:16
+    const response = await axios.post(
+      `${provider.config.baseUrl}${endpoint}?key=${credentials.apiKey}`,
+      {
+        contents: formattedMessages,
+        generationConfig: {
+          temperature: options.temperature || model.config.temperature,
+          maxOutputTokens: options.maxTokens || model.config.maxTokens,
+          topP: model.config.topP
+        }
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: model.config.timeout
+      }
+    );
 
-【场景】贫民窟
-描述：主角最初生活的地方
-MJ提示词：Poor urban neighborhood, narrow alley, old buildings, sunset lighting, cinematic atmosphere, 8k, concept art --ar 16:9
+    const content = response.data.candidates[0].content.parts[0].text;
+    
+    // Gemini不返回token统计，估算
+    const estimatedTokens = Math.ceil(content.length / 4);
+    
+    return {
+      content,
+      usage: {
+        prompt_tokens: 0,
+        completion_tokens: estimatedTokens,
+        total_tokens: estimatedTokens
+      },
+      model: model.modelId
+    };
+  }
 
-...
-    `.trim();
+  // 百度文心一言
+  static async callBaidu(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
+
+    // 获取access_token
+    const tokenResponse = await axios.post(
+      `${provider.config.baseUrl}${provider.config.tokenEndpoint}`,
+      null,
+      {
+        params: {
+          grant_type: 'client_credentials',
+          client_id: credentials.apiKey,
+          client_secret: credentials.secretKey
+        }
+      }
+    );
+
+    const accessToken = tokenResponse.data.access_token;
+    const endpoint = provider.config.endpoint.replace('{model}', model.modelId);
+
+    const response = await axios.post(
+      `${provider.config.baseUrl}${endpoint}?access_token=${accessToken}`,
+      {
+        messages: messages.map(m => ({
+          role: m.role,
+          content: m.content
+        })),
+        temperature: options.temperature || model.config.temperature,
+        max_output_tokens: options.maxTokens || model.config.maxTokens,
+        stream: options.stream || false
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: model.config.timeout,
+        responseType: options.stream ? 'stream' : 'json'
+      }
+    );
+
+    if (options.stream) {
+      return response.data;
+    }
+
+    return {
+      content: response.data.result,
+      usage: response.data.usage,
+      model: model.modelId
+    };
+  }
+
+  // 阿里通义千问
+  static async callAlibaba(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
+
+    const response = await axios.post(
+      `${provider.config.baseUrl}${provider.config.endpoint}`,
+      {
+        model: model.modelId,
+        input: {
+          messages: messages.map(m => ({
+            role: m.role,
+            content: m.content
+          }))
+        },
+        parameters: {
+          temperature: options.temperature || model.config.temperature,
+          max_tokens: options.maxTokens || model.config.maxTokens,
+          top_p: model.config.topP,
+          result_format: 'message'
+        }
+      },
+      {
+        headers: {
+          [provider.config.authHeader]: `${provider.config.authPrefix}${credentials.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: model.config.timeout
+      }
+    );
+
+    return {
+      content: response.data.output.choices[0].message.content,
+      usage: response.data.usage,
+      model: model.modelId
+    };
+  }
+
+  // 讯飞星火
+  static async callXinghuo(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
+
+    const response = await axios.post(
+      `${provider.config.baseUrl}${provider.config.endpoint}`,
+      {
+        model: model.modelId,
+        messages: messages.map(m => ({
+          role: m.role,
+          content: m.content
+        })),
+        temperature: options.temperature || model.config.temperature,
+        max_tokens: options.maxTokens || model.config.maxTokens,
+        stream: options.stream || false
+      },
+      {
+        headers: {
+          [provider.config.authHeader]: `${provider.config.authPrefix}${credentials.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: model.config.timeout,
+        responseType: options.stream ? 'stream' : 'json'
+      }
+    );
+
+    return {
+      content: response.data.choices[0].message.content,
+      usage: response.data.usage,
+      model: model.modelId
+    };
+  }
+
+  // Azure OpenAI
+  static async callAzure(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
+
+    const baseUrl = model.apiConfig.baseUrl.replace('{resource-name}', credentials.resourceName);
+    const endpoint = provider.config.endpoint.replace('{deployment-name}', model.modelId);
+
+    const response = await axios.post(
+      `${baseUrl}${endpoint}?api-version=${provider.config.apiVersion}`,
+      {
+        messages: messages.map(m => ({
+          role: m.role,
+          content: m.content
+        })),
+        temperature: options.temperature || model.config.temperature,
+        max_tokens: options.maxTokens || model.config.maxTokens,
+        top_p: model.config.topP,
+        stream: options.stream || false
+      },
+      {
+        headers: {
+          [provider.config.authHeader]: credentials.apiKey,
+          'Content-Type': 'application/json'
+        },
+        timeout: model.config.timeout,
+        responseType: options.stream ? 'stream' : 'json'
+      }
+    );
+
+    if (options.stream) {
+      return response.data;
+    }
+
+    return {
+      content: response.data.choices[0].message.content,
+      usage: response.data.usage,
+      model: model.modelId
+    };
+  }
+
+  // Cohere
+  static async callCohere(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
+
+    const response = await axios.post(
+      `${provider.config.baseUrl}${provider.config.endpoint}`,
+      {
+        model: model.modelId,
+        message: messages[messages.length - 1].content,
+        chat_history: messages.slice(0, -1).map(m => ({
+          role: m.role === 'assistant' ? 'CHATBOT' : 'USER',
+          message: m.content
+        })),
+        temperature: options.temperature || model.config.temperature,
+        max_tokens: options.maxTokens || model.config.maxTokens,
+        stream: options.stream || false
+      },
+      {
+        headers: {
+          [provider.config.authHeader]: `${provider.config.authPrefix}${credentials.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: model.config.timeout,
+        responseType: options.stream ? 'stream' : 'json'
+      }
+    );
+
+    return {
+      content: response.data.text,
+      usage: response.data.meta?.tokens,
+      model: model.modelId
+    };
+  }
+
+  // Mistral
+  static async callMistral(model, messages, options) {
+    // Mistral是OpenAI兼容格式
+    return this.callOpenAICompatible(model, messages, options);
+  }
+
+  // 腾讯混元
+  static async callTencent(model, messages, options) {
+    const credentials = model.getCredentials();
+    const provider = AI_PROVIDERS[model.provider];
+
+    // 腾讯云需要签名，这里简化处理
+    // 实际实现需要使用腾讯云SDK
+    const response = await axios.post(
+      `${provider.config.baseUrl}${provider.config.endpoint}`,
+      {
+        Model: model.modelId,
+        Messages: messages.map(m => ({
+          Role: m.role,
+          Content: m.content
+        })),
+        Temperature: options.temperature || model.config.temperature,
+        MaxTokens: options.maxTokens || model.config.maxTokens
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: model.config.timeout
+      }
+    );
+
+    return {
+      content: response.data.Choices[0].Message.Content,
+      usage: response.data.Usage,
+      model: model.modelId
+    };
+  }
+
+  // 更新模型统计
+  static async updateModelStats(model, usage) {
+    if (!usage) return;
+
+    model.stats.totalRequests += 1;
+    model.stats.totalTokens += (usage.total_tokens || 0);
+    await model.save();
+  }
+
+  // 流式响应处理
+  static async *streamGenerator(modelId, messages, options = {}) {
+    const model = await AIModel.findById(modelId);
+    if (!model || !model.isActive) {
+      throw new Error('AI模型不可用');
+    }
+
+    const stream = await this.generate(modelId, messages, { ...options, stream: true });
+
+    // 根据不同提供商解析流式数据
+    // 这里简化处理，实际需要根据提供商格式解析
+    for await (const chunk of stream) {
+      yield chunk;
+    }
   }
 }
 

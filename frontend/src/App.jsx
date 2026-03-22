@@ -7,6 +7,8 @@ import CreateScript from './pages/CreateScript'
 import ScriptDetail from './pages/ScriptDetail'
 import Pricing from './pages/Pricing'
 import Payment from './pages/Payment'
+import PaymentSuccess from './pages/PaymentSuccess'
+import PaymentCancel from './pages/PaymentCancel'
 import Profile from './pages/Profile'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -59,6 +61,8 @@ function App() {
           <Route path="/payment" element={
             user ? <Payment /> : <Navigate to="/login" />
           } />
+          <Route path="/payment/success" element={<PaymentSuccess />} />
+          <Route path="/payment/cancel" element={<PaymentCancel />} />
           <Route path="/profile" element={
             user ? <Profile user={user} /> : <Navigate to="/login" />
           } />
